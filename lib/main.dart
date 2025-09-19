@@ -122,6 +122,23 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
     }
   }
 
+void _onReorder(int oldIndex, int newIndex) {
+  setState(() {
+    if (newIndex > oldIndex) newIndex--;
+
+    final item = _playlist.removeAt(oldIndex);
+    _playlist.insert(newIndex, item);
+
+    // Update the current index if necessary
+    if (_currentIndex == oldIndex) {
+      _currentIndex = newIndex;
+    } else if (_currentIndex > oldIndex && _currentIndex < newIndex) {
+      _currentIndex--;
+    } else if (_currentIndex < oldIndex && _currentIndex >= newIndex) {
+      _currentIndex++;
+    }
+  });
+}
   String _formatDuration(Duration duration) {
     final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
     final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
@@ -245,15 +262,39 @@ Widget _buildControls() {
       ),
       body: Column(
         children: [
-          Expanded(
-            child: _playlist.isEmpty
-                ? Center(child: Text("No tracks selected."))
-                : ListView.builder(
-                    itemCount: _playlist.length,
-                    itemBuilder: (context, index) =>
-                        _buildTrackItem(_playlist[index], index),
-                  ),
-          ),
+	Expanded(
+	  child: _playlist.isEmpty
+	      ? Center(child: Text("No tracks selected."))
+	      : Scrollbar(
+		  child: ReorderableListView.builder(
+		    itemCount: _playlist.length,
+		    onReorder: _onReorder,
+		    buildDefaultDragHandles: false, // we'll use our own handle
+		    itemBuilder: (context, index) {
+		      final path = _playlist[index];
+		      final fileName = path.split('/').last;
+		      final isCurrent = index == _currentIndex;
+
+		      return ReorderableDragStartListener(
+			index: index,
+			key: ValueKey(path),
+			child: ListTile(
+			  title: Text(
+			    fileName,
+			    style: TextStyle(
+			      color: isCurrent ? Colors.greenAccent : Colors.white,
+			      fontWeight:
+				  isCurrent ? FontWeight.bold : FontWeight.normal,
+			    ),
+			  ),
+			  onTap: () => _playTrack(index),
+			  trailing: Icon(Icons.drag_handle),
+			),
+		      );
+		    },
+		  ),
+		),
+	),
           Padding(
             padding: const EdgeInsets.only(bottom: 16.0),
             child: _buildControls(),
