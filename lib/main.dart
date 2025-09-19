@@ -48,11 +48,30 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
       }
     });
 
-    _player.playerStateStream.listen((state) {
-      if (state.processingState == ProcessingState.completed) {
-        _playNext();
+_player.playerStateStream.listen((state) async {
+  if (state.processingState == ProcessingState.completed) {
+    final nextIndex = _currentIndex + 1;
+
+    if (nextIndex < _playlist.length) {
+      try {
+        await _player.setFilePath(_playlist[nextIndex]);
+	_player.pause();
+        setState(() {
+          _currentIndex = nextIndex;
+          _currentPosition = Duration.zero;
+          _totalDuration = _player.duration ?? Duration.zero;
+        });
+
+        // Do NOT call _player.play(); it will stay paused.
+      } catch (e) {
+        print('Error loading next track: $e');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Cannot load next track.')),
+        );
       }
-    });
+    }
+  }
+});
   }
 
   @override
