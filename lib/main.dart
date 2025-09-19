@@ -27,16 +27,52 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
   final List<String> _playlist = [];
   int _currentIndex = -1;
 
+  Duration _currentPosition = Duration.zero;
+  Duration _totalDuration = Duration.zero;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // Listen to audio position changes
+    _player.positionStream.listen((pos) {
+      setState(() {
+        _currentPosition = pos;
+      });
+    });
+
+    // Listen to total duration of audio
+    _player.durationStream.listen((dur) {
+      if (dur != null) {
+        setState(() {
+          _totalDuration = dur;
+        });
+      }
+    });
+
+    // Listen for end of playback to move to next
+    _player.playerStateStream.listen((state) {
+      if (state.processingState == ProcessingState.completed) {
+        _playNext();
+      }
+    });
+  }
+
   @override
   void dispose() {
     _player.dispose();
     super.dispose();
   }
 
-  Future<void> _pickAudioFiles() async {
-    // Request correct permission based on Android version
-    final permission = await _getStoragePermission();
+  Future<PermissionStatus> _getStoragePermission() async {
+    if (await Permission.audio.request().isGranted) {
+      return PermissionStatus.granted;
+    }
+    return await Permission.storage.request();
+  }
 
+  Future<void> _pickAudioFiles() async {
+    final permission = await _getStoragePermission();
     if (!permission.isGranted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Storage permission is required.')),
@@ -56,18 +92,6 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
     }
   }
 
-  Future<PermissionStatus> _getStoragePermission() async {
-    if (await Permission.audio.isGranted) return PermissionStatus.granted;
-
-    // Try audio permission for Android 13+
-    if (await Permission.audio.request().isGranted) {
-      return PermissionStatus.granted;
-    }
-
-    // Fallback to storage for older Android
-    return await Permission.storage.request();
-  }
-
   Future<void> _playTrack(int index) async {
     if (index < 0 || index >= _playlist.length) return;
 
@@ -77,13 +101,6 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
 
       setState(() {
         _currentIndex = index;
-      });
-
-      // Auto-play next track
-      _player.playerStateStream.listen((state) {
-        if (state.processingState == ProcessingState.completed) {
-          _playNext();
-        }
       });
     } catch (e) {
       print('Playback error: $e');
@@ -105,6 +122,12 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
     }
   }
 
+  String _formatDuration(Duration duration) {
+    final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return "$minutes:$seconds";
+  }
+
   Widget _buildTrackItem(String path, int index) {
     final fileName = path.split('/').last;
     final isCurrent = index == _currentIndex;
@@ -121,41 +144,98 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
     );
   }
 
-  Widget _buildControls() {
-    final isPlaying = _player.playing;
+Widget _buildControls() {
+  final isPlaying = _player.playing;
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        IconButton(
-          icon: Icon(Icons.skip_previous, size: 32),
-          onPressed: _playPrevious,
+  return Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      // Slider for seeking
+      Slider(
+        min: 0,
+        max: _totalDuration.inMilliseconds.toDouble(),
+        value: _currentPosition.inMilliseconds.clamp(0, _totalDuration.inMilliseconds).toDouble(),
+        onChanged: (value) {
+          final newPosition = Duration(milliseconds: value.round());
+          _player.seek(newPosition);
+        },
+      ),
+
+      // Time Labels
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(_formatDuration(_currentPosition), style: TextStyle(fontSize: 12)),
+            Text(_formatDuration(_totalDuration), style: TextStyle(fontSize: 12)),
+          ],
         ),
-        IconButton(
-          icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow, size: 40),
-          onPressed: () {
-            if (_player.playing) {
-              _player.pause();
-            } else if (_currentIndex >= 0) {
-              _player.play();
-            } else if (_playlist.isNotEmpty) {
-              _playTrack(0);
-            }
-          },
-        ),
-        IconButton(
-          icon: Icon(Icons.skip_next, size: 32),
-          onPressed: _playNext,
-        ),
-      ],
-    );
-  }
+      ),
+
+      // Control Buttons
+      Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          // Rewind 10s
+          IconButton(
+            icon: Icon(Icons.replay_10, size: 28),
+            onPressed: () {
+              final rewindTo = _currentPosition - Duration(seconds: 10);
+              _player.seek(rewindTo > Duration.zero ? rewindTo : Duration.zero);
+            },
+          ),
+
+          // Previous track
+          IconButton(
+            icon: Icon(Icons.skip_previous, size: 32),
+            onPressed: _playPrevious,
+          ),
+
+          // Play/Pause
+          IconButton(
+            icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow, size: 40),
+            onPressed: () {
+              if (isPlaying) {
+                _player.pause();
+              } else if (_currentIndex >= 0) {
+                _player.play();
+              } else if (_playlist.isNotEmpty) {
+                _playTrack(0);
+              }
+            },
+          ),
+
+          // Next track
+          IconButton(
+            icon: Icon(Icons.skip_next, size: 32),
+            onPressed: _playNext,
+          ),
+
+          // Fast-forward 10s
+          IconButton(
+            icon: Icon(Icons.forward_10, size: 28),
+            onPressed: () {
+              final forwardTo = _currentPosition + Duration(seconds: 10);
+              if (_totalDuration != Duration.zero &&
+                  forwardTo < _totalDuration) {
+                _player.seek(forwardTo);
+              } else {
+                _player.seek(_totalDuration);
+              }
+            },
+          ),
+        ],
+      ),
+    ],
+  );
+}
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Band Playlist Player'),
+        title: Text('Live Performance'),
         actions: [
           IconButton(
             icon: Icon(Icons.library_music),
